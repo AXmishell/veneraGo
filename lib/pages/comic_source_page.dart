@@ -15,6 +15,29 @@ import 'package:venera/utils/ext.dart';
 import 'package:venera/utils/io.dart';
 import 'package:venera/utils/translations.dart';
 
+bool _isValidVersion(String version) {
+  try {
+    compareSemVer(version, "0.0.0");
+    compareSemVer("0.0.0", version);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+bool _isHigherVersion(String candidate, String current) {
+  if (candidate == current) {
+    return false;
+  }
+  if (!_isValidVersion(candidate)) {
+    return false;
+  }
+  if (!_isValidVersion(current)) {
+    return true;
+  }
+  return compareSemVer(candidate, current);
+}
+
 class ComicSourcePage extends StatelessWidget {
   const ComicSourcePage({super.key});
 
@@ -73,20 +96,46 @@ class ComicSourcePage extends StatelessWidget {
     if (ComicSource.all().isEmpty) {
       return 0;
     }
-    var dio = AppDio();
-    var res = await dio.get<String>(appdata.settings['comicSourceListUrl']);
-    if (res.statusCode != 200) {
+    var urls = appdata.settings.comicSourceListUrls;
+    if (urls.isEmpty) {
       return -1;
     }
-    var list = jsonDecode(res.data!) as List;
+    var dio = AppDio();
     var versions = <String, String>{};
-    for (var source in list) {
-      versions[source['key']] = source['version'];
+    var succeeded = false;
+    for (var url in urls) {
+      try {
+        var res = await dio.get<String>(url);
+        if (res.statusCode != 200) {
+          continue;
+        }
+        var list = jsonDecode(res.data!) as List;
+        succeeded = true;
+        for (var source in list) {
+          if (source is! Map) {
+            continue;
+          }
+          var key = source['key'];
+          if (key == null) {
+            continue;
+          }
+          var version = source['version']?.toString() ?? '';
+          var current = versions[key.toString()];
+          if (current == null || _isHigherVersion(version, current)) {
+            versions[key.toString()] = version;
+          }
+        }
+      } catch (e) {
+        Log.error("ComicSource", "Failed to load source list $url: $e");
+      }
+    }
+    if (!succeeded) {
+      return -1;
     }
     var shouldUpdate = <String>[];
     for (var source in ComicSource.all()) {
       if (versions.containsKey(source.key) &&
-          compareSemVer(versions[source.key]!, source.version)) {
+          _isHigherVersion(versions[source.key]!, source.version)) {
         shouldUpdate.add(source.key);
       }
     }
@@ -337,58 +386,132 @@ class _ComicSourceList extends StatefulWidget {
   State<_ComicSourceList> createState() => _ComicSourceListState();
 }
 
-class _ComicSourceListState extends State<_ComicSourceList> {
-  List? json;
-  bool changed = false;
-  var controller = TextEditingController();
+class _RepoSourceEntry {
+  final Map<String, dynamic> data;
 
-  void load() async {
-    if (json != null) {
-      setState(() {
-        json = null;
-      });
+  final String repoUrl;
+
+  const _RepoSourceEntry(this.data, this.repoUrl);
+}
+
+class _ComicSourceListState extends State<_ComicSourceList> {
+  final List<TextEditingController> controllers = [];
+  List<_RepoSourceEntry> entries = [];
+  bool changed = false;
+  bool loading = false;
+
+  List<String> get urls =>
+      controllers.map((e) => e.text.trim()).where((e) => e.isNotEmpty).toList();
+
+  void addController([String url = ""]) {
+    var controller = TextEditingController(text: url);
+    controller.addListener(() => changed = true);
+    controllers.add(controller);
+  }
+
+  void removeController(int index) {
+    var controller = controllers.removeAt(index);
+    controller.dispose();
+    if (controllers.isEmpty) {
+      addController();
     }
-    if (controller.text.isEmpty) {
+    setState(() {});
+  }
+
+  Future<void> load() async {
+    var listUrls = urls;
+    if (listUrls.isEmpty) {
       setState(() {
-        json = [];
+        entries = [];
+        loading = false;
       });
       return;
     }
+    setState(() {
+      loading = true;
+      entries = [];
+    });
     var dio = AppDio();
-    try {
-      var res = await dio.get<String>(controller.text);
-      if (res.statusCode != 200) {
-        throw "error";
+    var result = <_RepoSourceEntry>[];
+    var byKey = <String, _RepoSourceEntry>{};
+    var order = <String>[];
+    var failed = 0;
+    for (var url in listUrls) {
+      try {
+        var res = await dio.get<String>(url);
+        if (res.statusCode != 200) {
+          failed++;
+          continue;
+        }
+        var json = jsonDecode(res.data!);
+        if (json is! List) {
+          failed++;
+          continue;
+        }
+        for (var item in json) {
+          if (item is! Map) {
+            continue;
+          }
+          var key = item['key'];
+          if (key == null) {
+            continue;
+          }
+          key = key.toString();
+          var entry = _RepoSourceEntry(Map<String, dynamic>.from(item), url);
+          var existing = byKey[key];
+          if (existing == null) {
+            byKey[key] = entry;
+            order.add(key);
+          } else {
+            var version = entry.data['version']?.toString() ?? '';
+            var currentVersion = existing.data['version']?.toString() ?? '';
+            if (_isHigherVersion(version, currentVersion)) {
+              byKey[key] = entry;
+            }
+          }
+        }
+      } catch (e) {
+        failed++;
+        Log.error("ComicSource", "Failed to load source list $url: $e");
       }
-      if (mounted) {
-        setState(() {
-          json = jsonDecode(res.data!);
-        });
-      }
-    } catch (e) {
+    }
+    for (var key in order) {
+      result.add(byKey[key]!);
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      entries = result;
+      loading = false;
+    });
+    if (failed > 0 && failed == listUrls.length) {
       context.showMessage(message: "Network error".tl);
-      if (mounted) {
-        setState(() {
-          json = [];
-        });
-      }
     }
   }
 
   @override
   void initState() {
     super.initState();
-    controller.text = appdata.settings['comicSourceListUrl'];
+    for (var url in appdata.settings.comicSourceListUrls) {
+      addController(url);
+    }
+    if (controllers.isEmpty) {
+      addController();
+    }
     load();
   }
 
   @override
   void dispose() {
-    super.dispose();
     if (changed) {
-      appdata.settings['comicSourceListUrl'] = controller.text;
+      appdata.settings.comicSourceListUrls = urls;
       appdata.saveData();
     }
+    for (var controller in controllers) {
+      controller.dispose();
+    }
+    super.dispose();
   }
 
   @override
@@ -400,68 +523,13 @@ class _ComicSourceListState extends State<_ComicSourceList> {
     var currentKey = ComicSource.all().map((e) => e.key).toList();
 
     return ListView.builder(
-      itemCount: (json?.length ?? 1) + 1,
+      itemCount: entries.length + 1 + (loading ? 1 : 0),
       itemBuilder: (context, index) {
         if (index == 0) {
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outlineVariant,
-                width: 0.6,
-              ),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ListTile(
-                  leading: Icon(Icons.source_outlined),
-                  title: Text("Repo URL".tl),
-                ),
-                TextField(
-                  controller: controller,
-                  decoration: InputDecoration(
-                    hintText: "URL",
-                    border: const UnderlineInputBorder(),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                  ),
-                  onChanged: (value) {
-                    changed = true;
-                  },
-                ).paddingHorizontal(16).paddingBottom(8),
-                Text(
-                  "The URL should point to a 'index.json' file".tl,
-                ).paddingLeft(16),
-                Text(
-                  "Do not report any issues related to sources to App repo.".tl,
-                ).paddingLeft(16),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () {
-                        launchUrlString(
-                          "https://github.com/venera-app/venera/blob/master/doc/comic_source.md",
-                        );
-                      },
-                      child: Text("Help".tl),
-                    ),
-                    FilledButton.tonal(
-                      onPressed: load,
-                      child: Text("Refresh".tl),
-                    ),
-                    const SizedBox(width: 16),
-                  ],
-                ),
-                const SizedBox(height: 16),
-              ],
-            ),
-          );
+          return _buildRepoCard(context);
         }
 
-        if (index == 1 && json == null) {
+        if (loading && index == 1) {
           return Center(
             child: CircularProgressIndicator(
               strokeWidth: 2,
@@ -469,19 +537,18 @@ class _ComicSourceListState extends State<_ComicSourceList> {
           );
         }
 
-        index--;
-
-        var key = json![index]["key"];
+        var entry = entries[index - 1 - (loading ? 1 : 0)];
+        var data = entry.data;
+        var key = data["key"]?.toString() ?? "";
         var action = currentKey.contains(key)
             ? const Icon(Icons.check, size: 20).paddingRight(8)
             : Button.filled(
                 child: Text("Add".tl),
                 onPressed: () async {
-                  var fileName = json![index]["fileName"];
-                  var url = json![index]["url"];
+                  var fileName = data["fileName"];
+                  var url = data["url"];
                   if (url == null || !(url.toString()).isURL) {
-                    var listUrl =
-                        appdata.settings['comicSourceListUrl'] as String;
+                    var listUrl = entry.repoUrl;
                     if (listUrl
                         .replaceFirst("https://", "")
                         .replaceFirst("http://", "")
@@ -493,22 +560,101 @@ class _ComicSourceListState extends State<_ComicSourceList> {
                       url = '$listUrl/$fileName';
                     }
                   }
-                  await widget.onAdd(url);
-                  setState(() {});
+                  await widget.onAdd(url.toString());
+                  if (mounted) {
+                    setState(() {});
+                  }
                 },
               ).fixHeight(32);
 
-        var description = json![index]["version"];
-        if (json![index]["description"] != null) {
-          description = "$description\n${json![index]["description"]}";
+        var description = data["version"]?.toString() ?? "";
+        if (data["description"] != null) {
+          description = "$description\n${data["description"]}";
         }
 
         return ListTile(
-          title: Text(json![index]["name"]),
+          title: Text(data["name"]?.toString() ?? key),
           subtitle: Text(description),
           trailing: action,
         );
       },
+    );
+  }
+
+  Widget _buildRepoCard(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+          width: 0.6,
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            leading: Icon(Icons.source_outlined),
+            title: Text("Repositories".tl),
+          ),
+          for (var i = 0; i < controllers.length; i++)
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: controllers[i],
+                    decoration: const InputDecoration(
+                      hintText: "URL",
+                      border: UnderlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: "Remove".tl,
+                  onPressed: () => removeController(i),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
+            ).paddingHorizontal(8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  addController();
+                });
+              },
+              icon: const Icon(Icons.add),
+              label: Text("Add Repository".tl),
+            ).paddingLeft(8),
+          ),
+          Text(
+            "The URL should point to a 'index.json' file".tl,
+          ).paddingLeft(16),
+          Text(
+            "Do not report any issues related to sources to App repo.".tl,
+          ).paddingLeft(16),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () {
+                  launchUrlString(
+                    "https://github.com/venera-app/venera/blob/master/doc/comic_source.md",
+                  );
+                },
+                child: Text("Help".tl),
+              ),
+              FilledButton.tonal(onPressed: load, child: Text("Refresh".tl)),
+              const SizedBox(width: 16),
+            ],
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
     );
   }
 }
@@ -899,7 +1045,7 @@ class _SliverComicSourceState extends State<_SliverComicSource> {
   Iterable<Widget> buildSourceSettings() sync* {
     // Try to get dynamic settings first (for getters), fall back to cached settings
     var settingsMap = source.getSettingsDynamic() ?? source.settings;
-    
+
     if (settingsMap == null) {
       return;
     } else if (source.data['settings'] == null) {

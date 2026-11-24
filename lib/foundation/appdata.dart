@@ -217,7 +217,7 @@ class Settings with ChangeNotifier {
     'customImageProcessing': defaultCustomImageProcessing,
     'sni': true,
     'autoAddLanguageFilter': 'none', // none, chinese, english, japanese
-    'comicSourceListUrl': _defaultSourceListUrl,
+    'comicSourceListUrl': defaultSourceListUrl,
     'preloadImageCount': 4,
     'continuousAutoLoadNextChapter': true,
     'followUpdatesFolder': null,
@@ -250,6 +250,36 @@ class Settings with ChangeNotifier {
     if (key != "dataVersion") {
       notifyListeners();
     }
+  }
+
+  /// Comic source repository urls.
+  ///
+  /// `comicSourceListUrls` is the canonical field. `comicSourceListUrl` is
+  /// kept in sync with its first element for compatibility with old data.
+  List<String> get comicSourceListUrls {
+    var value = _data['comicSourceListUrls'];
+    if (value is List) {
+      var urls = value
+          .whereType<String>()
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (urls.isNotEmpty) {
+        return urls;
+      }
+    }
+    var legacy = _data['comicSourceListUrl'];
+    if (legacy is String && legacy.trim().isNotEmpty) {
+      return [legacy.trim()];
+    }
+    return List.from(defaultSourceListUrls);
+  }
+
+  set comicSourceListUrls(List<String> urls) {
+    var cleaned = urls.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    _data['comicSourceListUrls'] = cleaned;
+    _data['comicSourceListUrl'] = cleaned.isNotEmpty ? cleaned.first : '';
+    notifyListeners();
   }
 
   void setEnabledComicSpecificSettings(
@@ -369,5 +399,13 @@ async function processImage(image, cid, eid, page, sourceKey) {
 }
 ''';
 
-const _defaultSourceListUrl =
+const defaultSourceListUrl =
+    "https://cdn.jsdelivr.net/gh/AXmishell/venera-configs@latest/index.json";
+
+const defaultSourceListBackupUrl =
     "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json";
+
+const defaultSourceListUrls = <String>[
+  defaultSourceListUrl,
+  defaultSourceListBackupUrl,
+];

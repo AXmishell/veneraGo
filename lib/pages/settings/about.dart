@@ -36,10 +36,7 @@ class _AboutSettingsState extends State<AboutSettings> {
         Column(
           children: [
             const SizedBox(height: 8),
-            Text(
-              "V${App.version}+${App.buildNumber}",
-              style: const TextStyle(fontSize: 16),
-            ),
+            Text("V${App.version}", style: const TextStyle(fontSize: 16)),
             Text(
               "veneraGo is a free and open-source app for comic reading.".tl,
             ),
@@ -80,8 +77,9 @@ class _AboutSettingsState extends State<AboutSettings> {
 }
 
 Future<bool> checkUpdate() async {
-  var res = await AppDio()
-      .get("https://cdn.jsdelivr.net/gh/AXmishell/veneraGo@master/pubspec.yaml");
+  var res = await AppDio().get(
+    "https://cdn.jsdelivr.net/gh/AXmishell/veneraGo@master/pubspec.yaml",
+  );
   if (res.statusCode == 200) {
     var data = loadYaml(res.data);
     if (data["version"] != null) {
@@ -98,7 +96,10 @@ Future<bool> checkUpdate() async {
   return false;
 }
 
-Future<void> checkUpdateUi([bool showMessageIfNoUpdate = true, bool delay = false]) async {
+Future<void> checkUpdateUi([
+  bool showMessageIfNoUpdate = true,
+  bool delay = false,
+]) async {
   try {
     var value = await checkUpdate();
     if (value) {
@@ -106,26 +107,27 @@ Future<void> checkUpdateUi([bool showMessageIfNoUpdate = true, bool delay = fals
         await Future.delayed(const Duration(seconds: 2));
       }
       showDialog(
-          context: App.rootContext,
-          builder: (context) {
-            return ContentDialog(
-              title: "New version available".tl,
-              content: Text(
-                      "A new version is available. Do you want to update now?"
-                          .tl)
-                  .paddingHorizontal(16),
-              actions: [
-                Button.text(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    launchUrlString(
-                        "https://github.com/AXmishell/veneraGo/releases");
-                  },
-                  child: Text("Update".tl),
-                ),
-              ],
-            );
-          });
+        context: App.rootContext,
+        builder: (context) {
+          return ContentDialog(
+            title: "New version available".tl,
+            content: Text(
+              "A new version is available. Do you want to update now?".tl,
+            ).paddingHorizontal(16),
+            actions: [
+              Button.text(
+                onPressed: () {
+                  Navigator.pop(context);
+                  launchUrlString(
+                    "https://github.com/AXmishell/veneraGo/releases",
+                  );
+                },
+                child: Text("Update".tl),
+              ),
+            ],
+          );
+        },
+      );
     } else if (showMessageIfNoUpdate) {
       App.rootContext.showMessage(message: "No new version available".tl);
     }

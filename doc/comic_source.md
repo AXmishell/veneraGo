@@ -13,16 +13,21 @@ This document will describe how to write a comic source for Venera.
 
 Venera can display a list of comic sources in the app.
 
-You can use the following repo url:
+You can use the following repo urls (the second one is used as a backup):
 ```
+https://cdn.jsdelivr.net/gh/AXmishell/venera-configs@latest/index.json
 https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json
 ```
-The repo is maintained by the Venera team.
+The repos are maintained by the Venera team.
 
-> The link is a mirror of the original repo. To contribute your comic source, please visit the [original repo](https://github.com/venera-app/venera-configs)
+> The link is a mirror of the original repo. To contribute your comic source, please visit the [original repo](https://github.com/AXmishell/venera-configs)
 
-You should provide a repository url to let the app load the comic source list.
-The url should point to a JSON file that contains the list of comic sources.
+You should provide one or more repository urls to let the app load the comic source list.
+Each url should point to a JSON file that contains the list of comic sources.
+
+If the same source key appears in multiple repositories, the source with the
+highest version takes precedence. When versions are equal, the repository
+configured first takes precedence.
 
 The JSON file should have the following format:
 
@@ -31,14 +36,14 @@ The JSON file should have the following format:
   {
     "name": "Source Name",
     "url": "https://example.com/source.js",
-    "filename": "Relative path to the source file",
+    "fileName": "Relative path to the source file",
     "version": "1.0.0",
     "description": "A brief description of the source"
   }
 ]
 ```
 
-Only one of `url` and `filename` should be provided.
+Only one of `url` and `fileName` should be provided.
 The description field is optional.
 
 ## Create a Comic Source

@@ -13,8 +13,8 @@ export "widget_utils.dart";
 export "context.dart";
 
 class _App {
-  final version = "1.7.9";
-  final buildNumber = "10709";
+  final version = "1.7.10";
+  final buildNumber = "10710";
 
   bool get isAndroid => Platform.isAndroid;
 

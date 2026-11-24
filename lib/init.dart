@@ -59,7 +59,7 @@ Future<void> init() async {
     handleTextShare();
     try {
       await FlutterDisplayMode.setHighRefreshRate();
-    } catch(e) {
+    } catch (e) {
       Log.error("Display Mode", "Failed to set high refresh rate: $e");
     }
   }
@@ -96,9 +96,32 @@ void _checkOldConfigs() {
     appdata.writeImplicitData();
   }
 
-  if (appdata.settings['comicSourceListUrl'].toString().contains("git.nyne.dev")) {
-    // migrate to jsdelivr cdn
-    appdata.settings['comicSourceListUrl'] = "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json";
+  var rawSourceListUrls = appdata.settings['comicSourceListUrls'];
+  var sourceListUrls = appdata.settings.comicSourceListUrls;
+  var migratedSourceListUrls = <String>[];
+  for (var url in sourceListUrls) {
+    var isLegacyDefault =
+        url.contains("git.nyne.dev") || url == defaultSourceListBackupUrl;
+    var targets = isLegacyDefault ? defaultSourceListUrls : [url];
+    for (var target in targets) {
+      if (!migratedSourceListUrls.contains(target)) {
+        migratedSourceListUrls.add(target);
+      }
+    }
+  }
+  if (listEquals(migratedSourceListUrls, [defaultSourceListUrl])) {
+    for (var url in defaultSourceListUrls) {
+      if (!migratedSourceListUrls.contains(url)) {
+        migratedSourceListUrls.add(url);
+      }
+    }
+  }
+  if (rawSourceListUrls is! List ||
+      !listEquals(
+        rawSourceListUrls.whereType<String>().toList(),
+        migratedSourceListUrls,
+      )) {
+    appdata.settings.comicSourceListUrls = migratedSourceListUrls;
     appdata.saveData();
   }
 }
